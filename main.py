@@ -73,7 +73,7 @@ def spinning_cursor():
         yield next(spinner)
 
 
-def scrape_google_maps(query, num_listings_to_capture, headless=False):
+def scrape_google_maps(query, num_listings_to_capture, headless=True):
     """
     Scrapes Google Maps for a given query,
     handling errors and retries, and returns a list of Business objects.
@@ -279,7 +279,7 @@ def scrape():
             return jsonify({"error": "Missing 'query' parameter"}), 400
 
         # Determine headless mode based on a parameter, default to True
-        headless = bool(data.get('headless', False))
+        headless = bool(data.get('headless', True))
 
         logger.info(f"Starting scrape for query: '{query}', listings: {num_listings_to_capture}, headless: {headless}")
 
