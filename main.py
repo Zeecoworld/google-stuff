@@ -115,7 +115,7 @@ def scrape_google_maps(query, num_listings_to_capture, headless=True):
             page.keyboard.press("Enter")
 
             # Wait for search results to load
-            page.wait_for_selector('a[href^="https://www.google.com/maps/place"]', timeout=7000)
+            page.wait_for_selector('a[href^="https://www.google.com/maps/place"]', timeout=90000)
         except PlaywrightTimeoutError as e:
             logger.error(f"Timeout error occurred while searching for {query}: {e}")
             browser.close()
