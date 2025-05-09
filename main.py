@@ -100,7 +100,7 @@ def scrape_google_maps(query, num_listings_to_capture, headless=True):
     }
 
     # Define a limit for listings processed per scroll batch to reduce worker load
-    MAX_LISTINGS_PER_SCROLL_BATCH = 15 # Process a maximum of 15 listings per scroll
+    MAX_LISTINGS_PER_SCROLL_BATCH = 10 # Reduced limit per scroll batch
 
     with sync_playwright() as p:
         browser = None # Initialize browser to None
@@ -118,13 +118,13 @@ def scrape_google_maps(query, num_listings_to_capture, headless=True):
 
             try:
                 # Increased initial page load timeout
-                page.goto("https://www.google.com/maps", timeout=45000)
-                page.wait_for_selector('input#searchboxinput', timeout=15000)
+                page.goto("https://www.google.com/maps", timeout=60000) # Increased timeout
+                page.wait_for_selector('input#searchboxinput', timeout=20000) # Increased timeout
                 page.fill('input#searchboxinput', search_for)
                 page.keyboard.press("Enter")
 
                 # Wait for search results to load with further increased timeout
-                page.wait_for_selector('a[href^="https://www.google.com/maps/place"]', timeout=25000) # Increased timeout to 25 seconds
+                page.wait_for_selector('a[href^="https://www.google.com/maps/place"]', timeout=30000) # Increased timeout
             except PlaywrightTimeoutError as e:
                 logger.error(f"Timeout error occurred while searching for {query}: {e}")
                 return [] # Return empty list on failure
@@ -144,7 +144,7 @@ def scrape_google_maps(query, num_listings_to_capture, headless=True):
 
             logger.info(f"Found {current_count} initial listings for {query}.")
 
-            MAX_SCROLL_ATTEMPTS = 15 # Increased scroll attempts
+            MAX_SCROLL_ATTEMPTS = 20 # Increased scroll attempts
             scroll_attempts = 0
             previously_counted = current_count
 
@@ -176,13 +176,12 @@ def scrape_google_maps(query, num_listings_to_capture, headless=True):
                     for retry_attempt in range(MAX_CLICK_RETRIES):
                         try:
                             listing.click()
-                            page.wait_for_timeout(2000)
+                            page.wait_for_timeout(1000) # Reduced wait after click slightly
                             clicked = True
                             break
                         except Exception as e:
                             logger.warning(f"Retrying click, attempt {retry_attempt + 1}: {e}")
-                            page.wait_for_timeout(1000)
-
+                            page.wait_for_timeout(500) # Reduced wait on retry
                     if not clicked:
                         logger.warning("Failed to click on listing after multiple attempts, skipping...")
                         continue
@@ -235,6 +234,10 @@ def scrape_google_maps(query, num_listings_to_capture, headless=True):
                             listings_scraped += 1
                             listings_processed_in_batch += 1 # Increment batch counter
                             logger.info(f"Added business: {business.name}")
+
+                        # Add a small delay after processing each listing
+                        page.wait_for_timeout(500) # Wait for 500ms after processing a listing
+
                     except Exception as e:
                         logger.error(f"Error extracting business data: {e}")
 
@@ -289,7 +292,8 @@ def scrape():
     try:
         data = request.get_json()
         query = data.get('query')  # Get the query from the JSON payload
-        num_listings_to_capture = int(data.get('num_listings', 20))  # default to 20
+        # Reduced default number of listings to capture
+        num_listings_to_capture = int(data.get('num_listings', 10))  # default to 10
         if not query:
             return jsonify({"error": "Missing 'query' parameter"}), 400
 
