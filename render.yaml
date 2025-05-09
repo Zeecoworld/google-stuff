@@ -1,10 +1,15 @@
 services:
   - type: web
-    name: playwright-python-app
-    plan: free
-    branch: main
-    dockerfilePath: Dockerfile
+    name: google-maps-scraper
+    runtime: docker
+    plan: standard
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
     envVars:
       - key: PLAYWRIGHT_BROWSERS_PATH
         value: /opt/render/project/playwright
+      - key: PORT
+        value: 10000
+    healthCheckPath: /
+    autoDeploy: true
 
