@@ -259,7 +259,7 @@ def scrape_google_maps(query, num_listings_to_capture, headless=True):
 @app.route('/')
 def index():
     """Serve the main HTML page"""
-   try:
+    try:
         return send_from_directory('templates', 'index.html')
     except FileNotFoundError:
         return "Index page not found. Please ensure 'templates/index.html' exists.", 404
