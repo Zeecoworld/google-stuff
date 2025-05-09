@@ -109,7 +109,7 @@ def scrape_google_maps(query, num_listings_to_capture, headless=True):
         search_for = query # Use the provided query directly
 
         try:
-            page.goto("https://www.google.com/maps", timeout=30000)
+            page.goto("https://www.google.com/maps", timeout=50000)
             page.wait_for_selector('input#searchboxinput', timeout=10000)
             page.fill('input#searchboxinput', search_for)
             page.keyboard.press("Enter")
