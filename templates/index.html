@@ -1,0 +1,606 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Google Maps Scraper</title>
+    <style>
+        :root {
+            --primary: #4285f4;
+            --secondary: #ea4335;
+            --dark: #202124;
+            --light: #f8f9fa;
+            --gray: #dadce0;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: Arial, sans-serif;
+        }
+
+        body {
+            background-color: var(--light);
+            color: var(--dark);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 20px;
+        }
+
+        .container {
+            width: 100%;
+            max-width: 1200px;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        .header {
+            text-align: center;
+            padding: 20px 0;
+        }
+
+        .header h1 {
+            color: var(--primary);
+            margin-bottom: 10px;
+        }
+
+        .search-container {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            padding: 20px;
+            background-color: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+        }
+
+        .search-row {
+            display: flex;
+            gap: 10px;
+        }
+
+        .search-row input {
+            flex: 1;
+            padding: 12px;
+            border: 1px solid var(--gray);
+            border-radius: 4px;
+            font-size: 16px;
+        }
+
+        .actions {
+            display: flex;
+            gap: 10px;
+            margin-top: 10px;
+            flex-wrap: wrap; /* Allow wrapping on smaller screens */
+        }
+
+        button {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 4px;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+        }
+
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        #searchButton {
+            background-color: var(--primary);
+            color: white;
+        }
+
+        #searchButton:hover:not(:disabled) {
+            background-color: #3367d6;
+        }
+
+        #scrapeButton {
+            background-color: var(--secondary);
+            color: white;
+        }
+
+        #scrapeButton:hover:not(:disabled) {
+            background-color: #d33426;
+        }
+
+        #downloadCsvButton {
+            background-color: #34a853;
+            color: white;
+        }
+
+        #downloadCsvButton:hover:not(:disabled) {
+            background-color: #2d9249;
+        }
+
+        .results-container {
+            background-color: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+            padding: 20px;
+            overflow-x: auto;
+        }
+
+        #message {
+            color: var(--dark); /* Changed from primary for better readability */
+            font-weight: normal; /* Changed from bold */
+            margin-bottom: 10px;
+        }
+
+        #resultsTable {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        #resultsTable th, #resultsTable td {
+            padding: 12px; /* Increased padding */
+            text-align: left;
+            border-bottom: 1px solid var(--gray);
+            word-break: break-word; /* Prevent long words from overflowing */
+        }
+
+        #resultsTable th {
+            background-color: var(--light);
+            position: sticky;
+            top: 0;
+            font-weight: bold;
+        }
+
+        #resultsTable tr:hover {
+            background-color: rgba(66, 133, 244, 0.1);
+        }
+
+        .spinner {
+            display: none;
+            width: 40px;
+            height: 40px;
+            margin: 20px auto;
+            border: 4px solid rgba(0, 0, 0, 0.1);
+            border-radius: 50%;
+            border-top: 4px solid var(--primary);
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .pagination {
+            display: flex;
+            justify-content: center;
+            margin-top: 20px;
+            gap: 10px;
+            align-items: center;
+        }
+
+        .pagination button {
+            padding: 8px 16px;
+            background-color: white;
+            color: var(--primary);
+            border: 1px solid var(--primary);
+        }
+
+        .pagination button:hover:not(:disabled) {
+            background-color: var(--primary);
+            color: white;
+        }
+         .pagination button:disabled {
+            color: var(--gray);
+            border-color: var(--gray);
+            cursor: not-allowed;
+        }
+
+
+        .status {
+            text-align: center;
+            margin: 10px 0;
+            font-size: 14px;
+            color: #666;
+        }
+
+        .file-options {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            flex-wrap: wrap; /* Allow wrapping on smaller screens */
+        }
+
+        #filenameInput {
+            padding: 12px;
+            border: 1px solid var(--gray);
+            border-radius: 4px;
+            font-size: 16px;
+            flex: 1;
+            min-width: 150px; /* Ensure input is not too small */
+        }
+
+        .settings-row {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            margin-top: 10px;
+        }
+
+        .settings-row label {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        /* Responsive adjustments */
+        @media (max-width: 600px) {
+            .search-row {
+                flex-direction: column;
+            }
+            .actions, .file-options {
+                flex-direction: column;
+                align-items: stretch;
+            }
+            button, #filenameInput {
+                width: 100%;
+            }
+             .pagination {
+                flex-direction: column;
+                align-items: center;
+            }
+        }
+
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Google Maps Scraper</h1>
+            <p>Search for businesses and extract their information</p>
+        </div>
+
+        <div class="search-container">
+            <div class="search-row">
+                <input type="text" id="queryInput" placeholder="Search for businesses (e.g., 'restaurants in New York')">
+                <input type="number" id="numListingsInput" placeholder="Number of listings" value="20" min="1" max="100">
+            </div>
+            <div class="settings-row">
+                <label>
+                    <input type="checkbox" id="headlessCheckbox" checked>
+                    Run in headless mode
+                </label>
+            </div>
+            <div class="actions">
+                <button id="searchButton">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <circle cx="11" cy="11" r="8"></circle>
+                        <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                    </svg>
+                    Search & Scrape
+                </button>
+                <div class="file-options">
+                    <input type="text" id="filenameInput" placeholder="Filename for CSV download">
+                    <button id="downloadCsvButton" disabled>
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                            <polyline points="7 10 12 15 17 10"></polyline>
+                            <line x1="12" y1="15" x2="12" y2="3"></line>
+                        </svg>
+                        Download CSV
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <div class="spinner" id="spinner"></div>
+
+        <div class="status" id="status"></div>
+
+        <div class="results-container">
+            <div id="message">Enter a search query and click "Search & Scrape" to begin</div>
+
+            <div style="overflow-x: auto; margin-top: 20px;">
+                <table id="resultsTable"></table>
+            </div>
+        </div>
+
+        <div class="pagination" id="pagination" style="display: none;">
+            <button id="prevPageBtn" disabled>Previous</button>
+            <span id="pageInfo">Page 1</span>
+            <button id="nextPageBtn">Next</button>
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const queryInput = document.getElementById('queryInput');
+            const numListingsInput = document.getElementById('numListingsInput');
+            const headlessCheckbox = document.getElementById('headlessCheckbox');
+            const searchButton = document.getElementById('searchButton');
+            const downloadCsvButton = document.getElementById('downloadCsvButton');
+            const resultsTable = document.getElementById('resultsTable');
+            const filenameInput = document.getElementById('filenameInput');
+            const messageElement = document.getElementById('message');
+            const spinner = document.getElementById('spinner');
+            const statusElement = document.getElementById('status');
+            const paginationElement = document.getElementById('pagination');
+            const prevPageBtn = document.getElementById('prevPageBtn');
+            const nextPageBtn = document.getElementById('nextPageBtn');
+            const pageInfoSpan = document.getElementById('pageInfo');
+
+            // API URL - change this to your Flask server URL if needed
+            const API_URL = window.location.origin;
+
+            // Store search results
+            let searchResults = [];
+            let currentPage = 1;
+            const resultsPerPage = 10; // Number of results to show per page
+
+            // Initialize event listeners
+            searchButton.addEventListener('click', performSearch);
+            downloadCsvButton.addEventListener('click', downloadResults);
+            prevPageBtn.addEventListener('click', () => changePage(-1));
+            nextPageBtn.addEventListener('click', () => changePage(1));
+
+            // Listen for Enter key press on the query input
+            queryInput.addEventListener('keypress', function(e) {
+                if (e.key === 'Enter') {
+                    performSearch();
+                }
+            });
+
+            // Function to perform the search via backend API
+            function performSearch() {
+                const query = queryInput.value.trim();
+                if (!query) {
+                    showMessage('Please enter a search query', 'warning');
+                    return;
+                }
+
+                const numListings = parseInt(numListingsInput.value) || 20;
+                const headless = headlessCheckbox.checked;
+
+                // Reset and show loading state
+                searchResults = [];
+                currentPage = 1;
+                clearResults();
+                showSpinner(true);
+                updateStatus('Searching and scraping for: ' + query);
+                disableButtons(true);
+                downloadCsvButton.disabled = true;
+
+                // Call the Flask API to perform the scrape
+                fetch(`${API_URL}/api/scrape`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ 
+                        query: query,
+                        num_listings: numListings,
+                        headless: headless
+                    })
+                })
+                .then(response => {
+                    if (!response.ok) {
+                        return response.json().then(err => { 
+                            throw new Error(err.error || `HTTP error! Status: ${response.status}`); 
+                        });
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    if (data.error) {
+                        throw new Error(data.error);
+                    }
+
+                    // Process the received business data
+                    searchResults = data.map(business => ({
+                        name: business.name || 'N/A',
+                        reviews_average: business.reviews_average !== undefined ? business.reviews_average : 'N/A',
+                        reviews_count: business.reviews_count !== undefined ? business.reviews_count : 'N/A',
+                        address: business.address || 'N/A',
+                        phone_number: business.phone_number || 'N/A',
+                        website: business.website || 'N/A',
+                        latitude: business.latitude !== undefined ? business.latitude : 'N/A',
+                        longitude: business.longitude !== undefined ? business.longitude : 'N/A'
+                    }));
+
+                    if (searchResults.length > 0) {
+                        updateStatus(`Found ${searchResults.length} results for: ${query}`);
+                        showMessage(''); // Clear initial message
+                        downloadCsvButton.disabled = false; // Enable download if results are found
+                    } else {
+                        updateStatus(`No results found for: ${query}`);
+                        showMessage('No results found. Try a different search query.', 'info');
+                        downloadCsvButton.disabled = true;
+                    }
+
+                    displayResults();
+                    showSpinner(false);
+                    disableButtons(false);
+                })
+                .catch(error => {
+                    console.error('Error searching:', error);
+                    updateStatus(`Error: ${error.message || 'Failed to perform search. Please try again.'}`);
+                    showMessage(`Error: ${error.message || 'Failed to perform search. Please try again.'}`, 'error');
+                    showSpinner(false);
+                    disableButtons(false);
+                    downloadCsvButton.disabled = true; // Disable download on search error
+                });
+            }
+
+            // Function to display results based on current page
+            function displayResults() {
+                clearResultsTable(); // Clear previous table content
+
+                if (!searchResults.length) {
+                    // Message is handled in performSearch now
+                    return;
+                }
+
+                // Calculate pagination
+                const startIndex = (currentPage - 1) * resultsPerPage;
+                const endIndex = Math.min(startIndex + resultsPerPage, searchResults.length);
+                const pageResults = searchResults.slice(startIndex, endIndex);
+
+                // Create table header
+                const thead = resultsTable.createTHead();
+                const headerRow = thead.insertRow();
+                const headers = ['Name', 'Rating', 'Reviews', 'Address', 'Phone', 'Website', 'Latitude', 'Longitude']; // Define headers
+                headers.forEach(headerText => {
+                    const th = document.createElement('th');
+                    th.textContent = headerText;
+                    headerRow.appendChild(th);
+                });
+
+                // Create table body and populate with data
+                const tbody = resultsTable.createTBody();
+                pageResults.forEach(result => {
+                    const row = tbody.insertRow();
+                    // Add cells for each data point, handling potential missing data
+                    row.insertCell().textContent = result.name || 'N/A';
+                    row.insertCell().textContent = result.reviews_average !== undefined ? result.reviews_average : 'N/A';
+                    row.insertCell().textContent = result.reviews_count !== undefined ? result.reviews_count : 'N/A';
+                    row.insertCell().textContent = result.address || 'N/A';
+                    row.insertCell().textContent = result.phone_number || 'N/A';
+                    
+                    // Create a clickable link for the website
+                    const websiteCell = row.insertCell();
+                    if (result.website && result.website !== 'No Website') {
+                        const link = document.createElement('a');
+                        link.href = result.website.startsWith('http') ? result.website : 'http://' + result.website;
+                        link.textContent = result.website;
+                        link.target = '_blank'; // Open link in new tab
+                        websiteCell.appendChild(link);
+                    } else {
+                        websiteCell.textContent = 'N/A';
+                    }
+                    row.insertCell().textContent = result.latitude !== undefined ? result.latitude : 'N/A';
+                    row.insertCell().textContent = result.longitude !== undefined ? result.longitude : 'N/A';
+                });
+
+                // Update pagination controls
+                if (searchResults.length > resultsPerPage) {
+                    paginationElement.style.display = 'flex';
+                    pageInfoSpan.textContent = `Page ${currentPage} of ${Math.ceil(searchResults.length / resultsPerPage)}`;
+                    prevPageBtn.disabled = currentPage === 1;
+                    nextPageBtn.disabled = endIndex >= searchResults.length;
+                } else {
+                    paginationElement.style.display = 'none';
+                }
+            }
+
+            // Function to change the current page
+            function changePage(direction) {
+                currentPage += direction;
+                displayResults();
+            }
+
+            // Function to download results as CSV
+            function downloadResults() {
+                if (!searchResults.length) {
+                    showMessage('No results to download.', 'warning');
+                    return;
+                }
+
+                const filename = (filenameInput.value.trim() || 'google_maps_results') + '.csv';
+
+                // Prepare CSV data
+                const headers = ['Name', 'Rating', 'Reviews', 'Address', 'Phone', 'Website', 'Latitude', 'Longitude'];
+                const csvRows = [];
+                csvRows.push(headers.join(',')); // Add header row
+
+                searchResults.forEach(result => {
+                    const rowData = [
+                        `"${(result.name || '').replace(/"/g, '""')}"`, // Handle commas and quotes
+                        result.reviews_average !== undefined ? result.reviews_average : '',
+                        result.reviews_count !== undefined ? result.reviews_count : '',
+                        `"${(result.address || '').replace(/"/g, '""')}"`,
+                        `"${(result.phone_number || '').replace(/"/g, '""')}"`,
+                        `"${(result.website || '').replace(/"/g, '""')}"`,
+                        result.latitude !== undefined ? result.latitude : '',
+                        result.longitude !== undefined ? result.longitude : ''
+                    ];
+                    csvRows.push(rowData.join(','));
+                });
+
+                const csvString = csvRows.join('\n');
+                const blob = new Blob([csvString], { type: 'text/csv;charset=utf-8;' });
+                const link = document.createElement('a');
+
+                if (link.download !== undefined) { // Feature detection for download attribute
+                    const url = URL.createObjectURL(blob);
+                    link.setAttribute('href', url);
+                    link.setAttribute('download', filename);
+                    link.style.visibility = 'hidden';
+                    document.body.appendChild(link);
+                    link.click();
+                    document.body.removeChild(link);
+                    showMessage('CSV download initiated.', 'success');
+                } else {
+                    // Fallback for browsers that don't support download attribute
+                    showMessage('Your browser does not support automatic CSV download. Please copy the data manually.', 'warning');
+                    // Optionally, display the CSV data in a textarea for manual copy
+                }
+            }
+
+            // Helper function to clear the results table
+            function clearResultsTable() {
+                while (resultsTable.firstChild) {
+                    resultsTable.removeChild(resultsTable.firstChild);
+                }
+            }
+
+            // Helper function to clear all results related content
+            function clearResults() {
+                clearResultsTable();
+                messageElement.textContent = 'Enter a search query and click "Search & Scrape" to begin';
+                statusElement.textContent = '';
+                paginationElement.style.display = 'none';
+            }
+
+            // Helper function to show/hide spinner
+            function showSpinner(show) {
+                spinner.style.display = show ? 'block' : 'none';
+            }
+
+            // Helper function to update status message
+            function updateStatus(message) {
+                statusElement.textContent = message;
+            }
+
+            // Helper function to show messages (info, warning, error, success)
+            function showMessage(message, type = 'info') {
+                messageElement.textContent = message;
+                // Reset classes
+                messageElement.className = ''; 
+                messageElement.classList.add(type);
+                
+                // Add basic styling for message types
+                if (type === 'warning') {
+                    messageElement.style.color = '#f7c32e'; // Yellow
+                } else if (type === 'error') {
+                    messageElement.style.color = '#dc3545'; // Red
+                } else if (type === 'success') {
+                    messageElement.style.color = '#28a745'; // Green
+                } else {
+                    messageElement.style.color = '#202124'; // Default color
+                }
+            }
+
+            // Helper function to disable/enable main buttons during processing
+            function disableButtons(disable) {
+                searchButton.disabled = disable;
+                downloadCsvButton.disabled = disable || searchResults.length === 0; // Keep download disabled if no results
+            }
+        });
+    </script>
+</body>
+</html>
