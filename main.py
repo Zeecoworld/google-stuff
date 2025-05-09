@@ -1,12 +1,13 @@
-from flask import Flask, request, jsonify,send_from_directory
+from flask import Flask, request, jsonify, send_from_directory
 import logging
 import traceback
-import time
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
 import re
 from dataclasses import dataclass, field, asdict
-from typing import List, Optional, Dict, Any
-import itertools
+import os
+import signal
+from functools import wraps
+import time
 
 # Configure logging
 logging.basicConfig(
@@ -16,6 +17,35 @@ logging.basicConfig(
 
 app = Flask(__name__)
 logger = logging.getLogger(__name__)
+
+# Set default timeout for all routes (30 seconds)
+DEFAULT_TIMEOUT = 30
+
+# Add timeout decorator to prevent long-running operations
+def timeout_handler(signum, frame):
+    raise TimeoutError("Operation timed out")
+
+def timeout_decorator(timeout_duration):
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            def handler(signum, frame):
+                raise TimeoutError(f"Function {func.__name__} timed out after {timeout_duration} seconds")
+            
+            # Set the timeout handler
+            original_handler = signal.getsignal(signal.SIGALRM)
+            signal.signal(signal.SIGALRM, handler)
+            signal.alarm(timeout_duration)
+            
+            try:
+                result = func(*args, **kwargs)
+            finally:
+                # Reset the alarm and restore original handler
+                signal.alarm(0)
+                signal.signal(signal.SIGALRM, original_handler)
+            return result
+        return wrapper
+    return decorator
 
 
 @dataclass
@@ -37,9 +67,6 @@ class BusinessList:
     business_list: list = field(default_factory=list)
     seen_businesses: set = field(default_factory=set)  # Set to track unique businesses
 
-    # Removed dataframe method as it's only used for file saving
-    # Removed save_to_csv method
-
     def add_business(self, business):
         """Add a business to the list if it's not a duplicate."""
         unique_key = (business.name, business.address, business.phone_number)
@@ -57,7 +84,7 @@ def extract_coordinates_from_url(url: str) -> tuple:
         coordinates = url.split('/@')[-1].split('/')[0]
         return float(coordinates.split(',')[0]), float(coordinates.split(',')[1])
     except (IndexError, ValueError) as e:
-        print(f"Error extracting coordinates: {e}")
+        logger.warning(f"Error extracting coordinates: {e}")
         return None, None
 
 
@@ -66,149 +93,127 @@ def clean_business_name(name: str) -> str:
     return name.replace(" · Visited link", "").strip() if name else "Unknown"
 
 
-def spinning_cursor():
-    """Generates a spinning cursor animation."""
-    spinner = itertools.cycle(['|', '/', '-', '\\'])
-    while True:
-        yield next(spinner)
-
-
-def scrape_google_maps(query, num_listings_to_capture, headless=True):
+def scrape_google_maps(query, num_listings_to_capture=5, timeout=20):
     """
-    Scrapes Google Maps for a given query,
-    handling errors and retries, and returns a list of Business objects.
-    headless: bool - Controls whether the browser runs in headless mode.
-                     Defaults to True.
+    Scrapes Google Maps for a given query, with strict limits.
+    Returns a list of Business objects.
+    
+    Args:
+        query: Search query
+        num_listings_to_capture: Maximum number of listings to capture (default: 5)
+        timeout: Maximum time allowed for scraping in seconds (default: 20)
     """
+    # Strictly limit the number of listings to prevent overload
+    num_listings_to_capture = min(num_listings_to_capture, 5)
+    
     listings_scraped = 0
     memory_list = BusinessList()
-    spinner = spinning_cursor()
-
-    # Configure Playwright for Docker environment
-    # The configuration for the specific browser (chromium) should be directly
-    # passed as keyword arguments to the launch method.
+    
+    # Extremely conservative browser configuration for server environments
     playwright_browser_config = {
-        'headless': headless, # Use the passed headless value
+        'headless': True,
         'args': [
-            '--disable-dev-shm-usage',  # Required for Docker
-            '--no-sandbox',  # Required for Docker
-            '--disable-setuid-sandbox',  # Required for Docker
-            '--disable-gpu',  # Reduces resource usage
-            '--disable-software-rasterizer',  # Reduces resource usage
-            # Add --disable-extensions and --disable-features if needed, but they are often included by default
+            '--disable-dev-shm-usage',
+            '--no-sandbox',
+            '--disable-setuid-sandbox',
+            '--disable-gpu',
+            '--disable-software-rasterizer',
+            '--disable-extensions',
+            '--disable-features=TranslateUI',
+            '--disable-component-extensions-with-background-pages',
+            '--disable-backgrounding-occluded-windows',
+            '--disable-renderer-backgrounding',
+            '--disable-ipc-flooding-protection',
+            '--single-process',  # Critical for reduced memory usage
+            '--memory-pressure-off',
+            '--mute-audio',
+            '--disable-default-apps',
+            '--no-default-browser-check',
+            '--disable-client-side-phishing-detection',
+            '--disable-sync'
         ]
     }
 
-    # Define a limit for listings processed per scroll batch to reduce worker load
-    MAX_LISTINGS_PER_SCROLL_BATCH = 10 # Reduced limit per scroll batch
-
+    # Set a time boundary for the function
+    start_time = time.time()
+    
     with sync_playwright() as p:
-        browser = None # Initialize browser to None
+        browser = None
         try:
-            # Pass the configuration directly to p.chromium.launch
             browser = p.chromium.launch(**playwright_browser_config)
             context = browser.new_context(
-                viewport={'width': 1280, 'height': 800},
-                user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
+                viewport={'width': 800, 'height': 600},  # Reduced viewport size
+                user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+                java_script_enabled=True,  # Ensure JavaScript is enabled
+                bypass_csp=True,  # Bypass Content Security Policy
+                ignore_https_errors=True  # Ignore HTTPS errors
             )
+            
+            # Reduce memory by limiting pages to 1
             page = context.new_page()
-
-            logger.info(f"Searching for: {query}.")
-            search_for = query # Use the provided query directly
-
+            page.set_default_timeout(5000)  # 5 second timeout for all Playwright operations
+            
+            logger.info(f"Searching for: {query}")
+            
             try:
-                # Increased initial page load timeout
-                page.goto("https://www.google.com/maps", timeout=60000) # Increased timeout
-                page.wait_for_selector('input#searchboxinput', timeout=20000) # Increased timeout
-                page.fill('input#searchboxinput', search_for)
+                page.goto("https://www.google.com/maps", timeout=10000)
+                page.wait_for_selector('input#searchboxinput', timeout=5000)
+                page.fill('input#searchboxinput', query)
                 page.keyboard.press("Enter")
-
-                # Wait for search results to load with further increased timeout
-                page.wait_for_selector('a[href^="https://www.google.com/maps/place"]', timeout=30000) # Increased timeout
+                
+                # Wait for search results to load
+                page.wait_for_selector('a[href^="https://www.google.com/maps/place"]', timeout=10000)
             except PlaywrightTimeoutError as e:
                 logger.error(f"Timeout error occurred while searching for {query}: {e}")
-                return [] # Return empty list on failure
-            except Exception as e:
-                logger.error(f"Error occurred while searching for {query}: {e}")
-                return [] # Return empty list on failure
-
+                return []
+            
             try:
+                # Get the current count of listings
                 current_count = page.locator('a[href^="https://www.google.com/maps/place"]').count()
-            except Exception as e:
-                logger.error(f"Error detecting results for {query}, skipping: {e}")
-                return []
-
-            if current_count == 0:
-                logger.info(f"No results found for {query}.")
-                return []
-
-            logger.info(f"Found {current_count} initial listings for {query}.")
-
-            MAX_SCROLL_ATTEMPTS = 20 # Increased scroll attempts
-            scroll_attempts = 0
-            previously_counted = current_count
-
-            while listings_scraped < num_listings_to_capture:
-                try:
-                    listings = page.locator('a[href^="https://www.google.com/maps/place"]').all()
-                except Exception as e:
-                    logger.error(f"Error while fetching listings: {e}")
-                    break
-
-                if not listings:
-                    logger.info(f"No more listings found.")
-                    break
-
-                listings_processed_in_batch = 0 # Counter for listings processed in the current scroll batch
-
+                logger.info(f"Found {current_count} initial listings for {query}")
+                
+                if current_count == 0:
+                    logger.info(f"No results found for {query}")
+                    return []
+                
+                # Process listings with strict time boundary checking
+                listings = page.locator('a[href^="https://www.google.com/maps/place"]').all()[:num_listings_to_capture]
+                
                 for listing in listings:
+                    # Check if we've exceeded our time limit
+                    if time.time() - start_time > timeout:
+                        logger.warning(f"Scraping operation timed out after {timeout} seconds")
+                        break
+                    
                     if listings_scraped >= num_listings_to_capture:
                         break
-                    if listings_processed_in_batch >= MAX_LISTINGS_PER_SCROLL_BATCH:
-                        logger.info(f"Processed {MAX_LISTINGS_PER_SCROLL_BATCH} listings in this scroll batch. Scrolling to load more.")
-                        break # Break the inner loop to scroll and get new listings
-
-                    spinner_char = next(spinner)
-                    logger.info(f"Scraping listing: {listings_scraped + 1} of {num_listings_to_capture} {spinner_char}")
-
-                    MAX_CLICK_RETRIES = 5
-                    clicked = False
-                    for retry_attempt in range(MAX_CLICK_RETRIES):
-                        try:
-                            listing.click()
-                            page.wait_for_timeout(1000) # Reduced wait after click slightly
-                            clicked = True
-                            break
-                        except Exception as e:
-                            logger.warning(f"Retrying click, attempt {retry_attempt + 1}: {e}")
-                            page.wait_for_timeout(500) # Reduced wait on retry
-                    if not clicked:
-                        logger.warning("Failed to click on listing after multiple attempts, skipping...")
-                        continue
-
-                    # Extract business information
-                    business = Business()
-
+                    
                     try:
+                        listing.click()
+                        page.wait_for_timeout(800)  # Reduced wait time
+                        
+                        # Extract business information
+                        business = Business()
+                        
                         # Get business name
                         business.name = clean_business_name(listing.get_attribute('aria-label'))
-
-                        # Get address
+                        
+                        # Address
                         address_elem = page.locator('button[data-item-id="address"] div[class*="fontBodyMedium"]').first
                         if address_elem.count() > 0:
                             business.address = address_elem.inner_text()
-
-                        # Get website
+                        
+                        # Website
                         website_elem = page.locator('a[data-item-id="authority"] div[class*="fontBodyMedium"]').first
                         if website_elem.count() > 0:
                             business.website = website_elem.inner_text()
-
-                        # Get phone number
+                        
+                        # Phone number
                         phone_elem = page.locator('button[data-item-id^="phone:tel:"] div[class*="fontBodyMedium"]').first
                         if phone_elem.count() > 0:
                             business.phone_number = phone_elem.inner_text()
-
-                        # Extract reviews_average
+                        
+                        # Reviews average
                         reviews_avg_elem = page.locator('span[role="img"][aria-label*="stars"]').first
                         if reviews_avg_elem.count() > 0:
                             reviews_avg_text = reviews_avg_elem.get_attribute('aria-label')
@@ -216,8 +221,8 @@ def scrape_google_maps(query, num_listings_to_capture, headless=True):
                                 match = re.search(r'(\d+\.\d+|\d+)', reviews_avg_text.replace(',', '.'))
                                 if match:
                                     business.reviews_average = float(match.group(1))
-
-                        # Extract reviews_count
+                        
+                        # Reviews count
                         reviews_count_elem = page.locator('button > span:has-text("reviews")').first
                         if reviews_count_elem.count() > 0:
                             reviews_count_text = reviews_count_elem.inner_text()
@@ -225,55 +230,32 @@ def scrape_google_maps(query, num_listings_to_capture, headless=True):
                                 match = re.search(r'(\d+)', reviews_count_text.replace(',', ''))
                                 if match:
                                     business.reviews_count = int(match.group(1))
-
-                        # Extract coordinates
+                        
+                        # Coordinates
                         business.latitude, business.longitude = extract_coordinates_from_url(page.url)
-
+                        
                         added = memory_list.add_business(business)
                         if added:
                             listings_scraped += 1
-                            listings_processed_in_batch += 1 # Increment batch counter
                             logger.info(f"Added business: {business.name}")
-
-                        # Add a small delay after processing each listing
-                        page.wait_for_timeout(500) # Wait for 500ms after processing a listing
-
+                        
                     except Exception as e:
-                        logger.error(f"Error extracting business data: {e}")
-
-                # Scroll down to load more results if we haven't reached the total
-                if listings_scraped < num_listings_to_capture:
-                    page.mouse.wheel(0, 5000)
-                    page.wait_for_timeout(3000)
-
-                    new_count = page.locator('a[href^="https://www.google.com/maps/place"]').count()
-                    if new_count == previously_counted:
-                        scroll_attempts += 1
-                        if scroll_attempts >= MAX_SCROLL_ATTEMPTS:
-                            logger.info(f"No more listings found after {scroll_attempts} scroll attempts.")
-                            break
-                    else:
-                        scroll_attempts = 0
-
-                    previously_counted = new_count
-
-                    # Check for the "You've reached the end of the list" message
-                    if page.locator("text=You've reached the end of the list").is_visible():
-                         logger.info(f"Reached the end of the list for query: {query}.")
-                         break
-
+                        logger.warning(f"Error processing a listing: {e}")
+                        continue
+                        
+            except Exception as e:
+                logger.error(f"Error scraping listings: {e}")
+                
         except Exception as e:
             logger.error(f"An error occurred during Playwright operation: {e}")
-            return []
         finally:
-            # Ensure browser is closed even if errors occur
-            if browser: # Check if browser object was successfully created
+            # Ensure browser is properly closed to free memory
+            if browser:
                 browser.close()
-
+    
     return memory_list.business_list
 
 
-# Removed the index route as it's likely not needed without file output
 @app.route('/')
 def index():
     """Serve the main HTML page"""
@@ -284,33 +266,36 @@ def index():
 
 
 @app.route('/api/scrape', methods=['POST'])
+@timeout_decorator(DEFAULT_TIMEOUT)
 def scrape():
     """
-    Endpoint to scrape Google Maps places based on a search query.
-    Forces headless mode to True for server environments.
+    Endpoint to scrape Google Maps places with strict resource limits.
     """
     try:
         data = request.get_json()
-        query = data.get('query')  # Get the query from the JSON payload
-        # Reduced default number of listings to capture
-        num_listings_to_capture = int(data.get('num_listings', 10))  # default to 10
+        query = data.get('query')
+        
         if not query:
             return jsonify({"error": "Missing 'query' parameter"}), 400
-
-        # Force headless mode to True for server environments
-        headless = True
-
-        logger.info(f"Starting scrape for query: '{query}', listings: {num_listings_to_capture}, headless: {headless}")
-
-        results = scrape_google_maps(query, num_listings_to_capture, headless)
+        
+        # Strictly limit number of listings to 5
+        num_listings_to_capture = min(int(data.get('num_listings', 3)), 5)
+        logger.info(f"Starting scrape for query: '{query}', limited to {num_listings_to_capture} listings")
+        
+        # Set a strict timeout for the scraping function
+        results = scrape_google_maps(query, num_listings_to_capture, timeout=25)
+        
         if not results:
-            logger.warning(f"No places found for query: '{query}'")
-            return jsonify({"error": f"No places found for query: '{query}'"}), 404
-
+            return jsonify({"message": "No results found or timeout occurred", "results": []}), 200
+        
         # Convert dataclass objects to dictionaries for JSON serialization
         results_dict = [asdict(business) for business in results]
-        return jsonify(results_dict), 200
+        return jsonify({"message": f"Found {len(results_dict)} results", "results": results_dict}), 200
+        
+    except TimeoutError as e:
+        logger.warning(f"Request timed out: {str(e)}")
+        return jsonify({"error": "Request timed out. Try a simpler query or fewer listings."}), 408
     except Exception as e:
         error_message = f"An error occurred: {str(e)}"
         logger.exception(error_message)
-        return jsonify({"error": error_message, "traceback": traceback.format_exc()}), 500
+        return jsonify({"error": error_message}), 500
