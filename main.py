@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify,send_from_directory
+from flask import Flask, request, jsonify
 import logging
 import traceback
 import time
@@ -83,21 +83,22 @@ def scrape_google_maps(query, num_listings_to_capture, headless=True):
     spinner = spinning_cursor()
 
     # Configure Playwright for Docker environment
-    playwright_config = {
-        'chromium': {
-            'headless': headless,
-            'args': [
-                '--disable-dev-shm-usage',  # Required for Docker
-                '--no-sandbox',  # Required for Docker
-                '--disable-setuid-sandbox',  # Required for Docker
-                '--disable-gpu',  # Reduces resource usage
-                '--disable-software-rasterizer',  # Reduces resource usage
-            ]
-        }
+    # The configuration for the specific browser (chromium) should be directly
+    # passed as keyword arguments to the launch method.
+    playwright_browser_config = {
+        'headless': headless,
+        'args': [
+            '--disable-dev-shm-usage',  # Required for Docker
+            '--no-sandbox',  # Required for Docker
+            '--disable-setuid-sandbox',  # Required for Docker
+            '--disable-gpu',  # Reduces resource usage
+            '--disable-software-rasterizer',  # Reduces resource usage
+        ]
     }
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(**playwright_config)
+        # Pass the configuration directly to p.chromium.launch
+        browser = p.chromium.launch(**playwright_browser_config)
         context = browser.new_context(
             viewport={'width': 1280, 'height': 800},
             user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
@@ -255,7 +256,7 @@ def scrape_google_maps(query, num_listings_to_capture, headless=True):
     return memory_list.business_list
 
 
-
+# Removed the index route as it's likely not needed without file output
 @app.route('/')
 def index():
     """Serve the main HTML page"""
